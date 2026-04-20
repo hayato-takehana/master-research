@@ -1,0 +1,10 @@
+.idea/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Generated experiment outputs
+data/outputs/
+
+# Temporary backup while rebuilding Git metadata
+.git_backup_*/
