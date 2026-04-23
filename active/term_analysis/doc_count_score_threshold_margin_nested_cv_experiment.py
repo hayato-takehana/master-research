@@ -33,7 +33,7 @@ from sklearn import svm
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import StratifiedKFold
 
-from dataset_loader import load_documents
+from dataset_loader import load_document_filenames, load_documents
 from text_vectorizer import Tf_idf
 
 try:
@@ -42,12 +42,14 @@ except ImportError:
     shap = None
 
 
-ABS_SCORE_THRESHOLDS = [0.07, 0.08, 0.09]
+ABS_SCORE_THRESHOLDS = [0.01, 0.02, 0.03]
 MIN_LEN = 0
 MIN_DF = 0.0
 USE_STEMMING = True
 KEEP_DIGITS = False
 PERCENT_MODE = "drop"
+GLOBAL_TOP_MARGIN_MISCLASSIFIED_N = 10
+GLOBAL_TOP_MARGIN_MISCLASSIFIED_FILENAME = "global_top_margin_misclassified.csv"
 
 LINEAR_C_VALUES = [0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000]
 RBF_C_VALUES = [0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000]
@@ -257,10 +259,20 @@ def load_corpus():
         keep_digits=KEEP_DIGITS,
         percent_mode=PERCENT_MODE,
     )
+    # `load_documents` と同じフォルダ走査順で PDF 名も取得し、doc_id と対応づける。
+    pdf_names_1, pdf_names_0 = load_document_filenames(real_scam=False, sort_files=False)
     documents = np.array(documents_1 + documents_0, dtype=object)
     labels = np.array([1] * len(documents_1) + [0] * len(documents_0), dtype=int)
     doc_ids = np.arange(len(documents), dtype=int)
-    return documents, labels, doc_ids
+    pdf_names = np.array(pdf_names_1 + pdf_names_0, dtype=object)
+
+    if len(pdf_names) != len(documents):
+        raise RuntimeError(
+            "pdf filename count does not match document count: "
+            f"pdf_names={len(pdf_names)}, documents={len(documents)}"
+        )
+
+    return documents, labels, doc_ids, pdf_names
 
 
 def log_progress(message):
@@ -819,6 +831,13 @@ def fit_selected_outer_model_detail(outer_context, selected_record, feature_mode
         "misclassified_indices": misclassified_indices,
         "outer_context": outer_context,
     }
+
+
+def compute_margin_distance(actual_label, decision_value):
+    """真のラベル基準の signed margin から、誤分類点の離れ具合を正値で返す。"""
+    signed_label = 1 if int(actual_label) == 1 else -1
+    signed_margin = signed_label * float(decision_value)
+    return float(-signed_margin)
 
 
 def get_row_feature_indices_and_values(matrix_row):
@@ -1633,6 +1652,93 @@ def save_outer_fold_misclassified_documents(result, output_dir):
     result["saved_csv_paths"]["misclassified_summary"] = str(summary_path)
 
 
+def save_global_top_margin_misclassified_documents(results, outer_fold_contexts, pdf_names, output_path, top_n):
+    """全スコア閾値を横断して、margin から最も遠い誤分類文書 top-N を 1 CSV にまとめる。"""
+    if top_n <= 0:
+        raise ValueError(f"top_n must be positive, got {top_n}")
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    pdf_names = np.asarray(pdf_names, dtype=object)
+    active_conditions = {
+        (result["feature_mode"], result["kernel"])
+        for result in results
+        if result.get("selected_records")
+    }
+    include_condition_columns = len(active_conditions) > 1
+
+    all_rows = []
+    for result in results:
+        feature_mode = result["feature_mode"]
+        kernel = result["kernel"]
+
+        for selected_record in result.get("selected_records", []):
+            outer_fold = int(selected_record["outer_fold"])
+            outer_context = outer_fold_contexts[outer_fold - 1]["outer_context"]
+            model_detail = fit_selected_outer_model_detail(
+                outer_context,
+                selected_record,
+                feature_mode,
+                kernel,
+            )
+
+            for misclassified_idx in model_detail["misclassified_indices"]:
+                actual_label = int(model_detail["outer_context"].test_labels[misclassified_idx])
+                predicted_label = int(model_detail["y_pred"][misclassified_idx])
+                decision_value = float(model_detail["decision_values"][misclassified_idx])
+                document_id = int(model_detail["outer_context"].test_doc_ids[misclassified_idx])
+
+                if not 0 <= document_id < len(pdf_names):
+                    raise RuntimeError(
+                        "document_id is out of range for pdf_names: "
+                        f"document_id={document_id}, pdf_name_count={len(pdf_names)}"
+                    )
+
+                row = {
+                    "score_threshold": float(selected_record["score_threshold"]),
+                    "rank": 0,
+                    "pdf_name": str(pdf_names[document_id]),
+                    "actual_label": actual_label,
+                    "predicted_label": predicted_label,
+                    "margin_distance": compute_margin_distance(actual_label, decision_value),
+                }
+                if include_condition_columns:
+                    row["feature_mode"] = feature_mode
+                    row["kernel"] = kernel
+                all_rows.append(row)
+
+    all_rows.sort(
+        key=lambda row: (
+            -row["margin_distance"],
+            row["score_threshold"],
+            row.get("feature_mode", ""),
+            row.get("kernel", ""),
+            row["pdf_name"],
+            row["actual_label"],
+            row["predicted_label"],
+        )
+    )
+
+    top_rows = all_rows[:top_n]
+    for rank, row in enumerate(top_rows, start=1):
+        row["rank"] = rank
+
+    columns = [
+        "score_threshold",
+        "rank",
+        "pdf_name",
+        "actual_label",
+        "predicted_label",
+        "margin_distance",
+    ]
+    if include_condition_columns:
+        columns.extend(["feature_mode", "kernel"])
+
+    pd.DataFrame(top_rows, columns=columns).to_csv(output_path, index=False, encoding="utf-8-sig")
+    return output_path
+
+
 def save_threshold_term_count_outputs(outer_fold_contexts, score_threshold_candidates, output_dir):
     """閾値ごとの採用語数と偏り内訳を outer fold 単位・要約の両方で保存する。"""
     output_dir = Path(output_dir)
@@ -1809,7 +1915,7 @@ def save_fixed_threshold_global_outputs(summary_rows_by_condition, best_results_
     metrics_root = Path(output_root) / METRICS_DIR_NAME
     metrics_root.mkdir(parents=True, exist_ok=True)
 
-    for feature_mode, kernel in get_active_conditions():
+    for feature_mode, kernel in summary_rows_by_condition.keys():
         condition_dir = get_condition_metrics_dir(metrics_root, feature_mode, kernel)
         save_summary_csv(
             summary_rows_by_condition[(feature_mode, kernel)],
@@ -1905,11 +2011,12 @@ if __name__ == "__main__":
     runtime_config = prompt_experiment_configuration()
     print_experiment_configuration(runtime_config)
 
-    documents, labels, doc_ids = load_corpus()
+    documents, labels, doc_ids, pdf_names = load_corpus()
     active_conditions = get_active_conditions(
         runtime_config["kernel_mode"],
         runtime_config["feature_mode"],
     )
+    global_margin_source_results = []
     log_progress("[main] corpus loaded; building split contexts")
     outer_fold_contexts = build_outer_fold_contexts(documents, labels, doc_ids)
 
@@ -1970,6 +2077,7 @@ if __name__ == "__main__":
                     condition_dir / ERROR_ANALYSIS_OUTPUT_DIR_NAME,
                 )
                 print_result(result, f"{format_condition_label(feature_mode, kernel)} / 固定閾値={score_threshold}")
+                global_margin_source_results.append(result)
 
                 summary_row = build_fixed_threshold_summary_row(score_threshold, result)
                 fixed_summary_rows_by_condition[(feature_mode, kernel)].append(summary_row)
@@ -2031,3 +2139,32 @@ if __name__ == "__main__":
             tuned_summary_rows.append(build_tuned_threshold_summary_row(result))
 
         save_tuned_threshold_global_outputs(tuned_summary_rows, tuned_root)
+
+    if not global_margin_source_results:
+        log_progress("\n[main] running fixed-threshold evaluations for global top-margin misclassification export")
+        for score_threshold in ABS_SCORE_THRESHOLDS:
+            log_progress(f"[main] export-only fixed threshold = {score_threshold}")
+            for feature_mode, kernel in active_conditions:
+                global_margin_source_results.append(
+                    run_nested_cv_for_condition(
+                        outer_fold_contexts,
+                        feature_mode,
+                        kernel,
+                        [score_threshold],
+                    )
+                )
+
+    try:
+        global_margin_csv_path = save_global_top_margin_misclassified_documents(
+            global_margin_source_results,
+            outer_fold_contexts,
+            pdf_names,
+            SAVE_DIR / GLOBAL_TOP_MARGIN_MISCLASSIFIED_FILENAME,
+            GLOBAL_TOP_MARGIN_MISCLASSIFIED_N,
+        )
+        log_progress(f"saved global top-margin misclassified csv: {global_margin_csv_path}")
+    except Exception as exc:
+        log_progress(
+            "[output warning] global top-margin misclassified export failed: "
+            f"{type(exc).__name__}: {exc}"
+        )
