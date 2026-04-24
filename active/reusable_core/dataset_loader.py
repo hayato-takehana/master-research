@@ -58,13 +58,28 @@ def _dataset_paths(real_scam=False):
 def load_document_filenames(real_scam=False, sort_files=False):
     scam_folder, non_scam_folder = _dataset_paths(real_scam=real_scam)
 
-    def _list_pdf_names(folder):
-        files = [f for f in os.listdir(folder) if f.endswith(".pdf")]
+    def _display_document_name(filename):
+        path = Path(filename)
+        if path.suffix.lower() != ".txt":
+            return filename
+        stem = path.stem
+        for suffix in ("_text_cleaned", "_ocr_text_cleaned", "_cleaned"):
+            if stem.endswith(suffix):
+                stem = stem[: -len(suffix)]
+                break
+        return f"{stem}.pdf"
+
+    def _list_document_names(folder):
+        files = [
+            f
+            for f in os.listdir(folder)
+            if f.lower().endswith(".pdf") or f.lower().endswith(".txt")
+        ]
         if sort_files:
             files.sort()
-        return files
+        return [_display_document_name(f) for f in files]
 
-    return _list_pdf_names(scam_folder), _list_pdf_names(non_scam_folder)
+    return _list_document_names(scam_folder), _list_document_names(non_scam_folder)
 
 
 def load_documents(real_scam=False, keep_digits=False, percent_mode="drop"):
