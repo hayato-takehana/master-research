@@ -32,8 +32,8 @@ from active.term_analysis.doc_count_score_threshold_margin_nested_cv_experiment 
 OUTPUT_DIR = PROJECT_ROOT / "data" / "outputs" / "ta" / "pdf_feature_diff"
 
 # 引数なしで実行する場合はここを書き換えてください。
-DEFAULT_TRAIN_PDF = "104_0.pdf"
-DEFAULT_TEST_PDF = "105_0.pdf"
+DEFAULT_TRAIN_PDF = "60_1.pdf"
+DEFAULT_TEST_PDF = "63_0.pdf"
 DEFAULT_SCORE_THRESHOLD = 0.11
 DEFAULT_FEATURE_MODE = "binary"  # "count" or "binary"
 DEFAULT_OUTPUT = str(OUTPUT_DIR / "pdf_feature_values.csv")
@@ -116,6 +116,42 @@ def build_feature_value_rows(
     return rows
 
 
+def calculate_train_label_match_stats(
+    context: SplitFeatureContext,
+    score_threshold: float,
+    feature_mode: str,
+    test_doc_id: int,
+) -> dict:
+    test_row_index = int(np.flatnonzero(context.test_doc_ids == test_doc_id)[0])
+    threshold_bundle = context.get_threshold_bundle(score_threshold)
+    selected_matrix = threshold_bundle["feature_matrices"][feature_mode]
+
+    train_matrix = selected_matrix["train"]
+    if hasattr(train_matrix, "toarray"):
+        train_values = np.asarray(train_matrix.toarray())
+    else:
+        train_values = np.asarray(train_matrix)
+
+    test_values = dense_row_values(selected_matrix["test"], test_row_index)
+    feature_count = int(test_values.shape[0])
+    if feature_count == 0:
+        per_train_match_rates = np.zeros(train_values.shape[0], dtype=float)
+    else:
+        per_train_match_rates = np.mean(train_values == test_values, axis=1)
+
+    stats = {
+        "label0_train_count": int(np.sum(context.train_labels == 0)),
+        "label1_train_count": int(np.sum(context.train_labels == 1)),
+        "label0_mean_match_rate": None,
+        "label1_mean_match_rate": None,
+    }
+    for label in (0, 1):
+        label_mask = context.train_labels == label
+        if np.any(label_mask):
+            stats[f"label{label}_mean_match_rate"] = float(np.mean(per_train_match_rates[label_mask]))
+    return stats
+
+
 def save_feature_values(
     documents: np.ndarray,
     labels: np.ndarray,
@@ -130,6 +166,7 @@ def save_feature_values(
     output_path = output_path if output_path.is_absolute() else PROJECT_ROOT / output_path
     matched_fold = None
     rows = None
+    label_match_stats = None
 
     for outer_fold, train_index, test_index in iter_outer_splits(documents, labels):
         if not is_requested_train_test_split(train_doc_id, test_doc_id, train_index, test_index):
@@ -154,14 +191,21 @@ def save_feature_values(
             test_doc_id,
             pdf_names,
         )
+        label_match_stats = calculate_train_label_match_stats(
+            context,
+            score_threshold,
+            feature_mode,
+            test_doc_id,
+        )
 
-    if matched_fold is None or rows is None:
+    if matched_fold is None or rows is None or label_match_stats is None:
         raise RuntimeError("No outer fold matched the requested train/test PDF condition.")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result_df = pd.DataFrame(rows)
     result_df.to_csv(output_path.resolve(), index=False, encoding="utf-8-sig")
     result_df.attrs["matched_fold"] = matched_fold
+    result_df.attrs["label_match_stats"] = label_match_stats
     return result_df
 
 
@@ -233,6 +277,26 @@ def main() -> int:
     print(f"test PDF : {normalize_pdf_name(test_pdf)}")
     print(f"threshold: {args.threshold}")
     print(f"feature mode: {args.feature_mode}")
+    train_pdf_name = normalize_pdf_name(train_pdf)
+    test_pdf_name = normalize_pdf_name(test_pdf)
+    equal_feature_count = int((result_df[train_pdf_name] == result_df[test_pdf_name]).sum())
+    feature_count = int(len(result_df))
+    match_rate = equal_feature_count / feature_count if feature_count else 0.0
+    print(f"equal features: {equal_feature_count}/{feature_count}")
+    print(f"match rate: {match_rate:.6f}")
+    label_match_stats = result_df.attrs["label_match_stats"]
+    label0_rate = label_match_stats["label0_mean_match_rate"]
+    label1_rate = label_match_stats["label1_mean_match_rate"]
+    print(
+        "label0 train mean match rate: "
+        f"{label0_rate:.6f} "
+        f"(n={label_match_stats['label0_train_count']})"
+    )
+    print(
+        "label1 train mean match rate: "
+        f"{label1_rate:.6f} "
+        f"(n={label_match_stats['label1_train_count']})"
+    )
     return 0
 
 
