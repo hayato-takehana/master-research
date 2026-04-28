@@ -23,12 +23,13 @@ from project_runtime import bootstrap_project_paths, redirect_relative_outputs
 
 bootstrap_project_paths(PROJECT_ROOT)
 os.chdir(PROJECT_ROOT)
-SAVE_DIR = PROJECT_ROOT / "data" / "outputs" / "ta" / "dcstmnce"
+SAVE_DIR = PROJECT_ROOT / "data" / "outputs" / "ta" / "dcwc_mncs"
 SAVE_DIR.mkdir(parents=True, exist_ok=True)
 redirect_relative_outputs(SAVE_DIR)
 
 import numpy as np
 import pandas as pd
+from scipy import sparse
 from sklearn import svm
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import StratifiedKFold
@@ -42,7 +43,7 @@ except ImportError:
     shap = None
 
 
-ABS_SCORE_THRESHOLDS = [0.01, 0.02, 0.03]
+ABS_SCORE_THRESHOLDS = [0.10, 0.11, 0.12, 0.13, 0.14, 0.15, 0.16, 0.17, 0.18, 0.19, 0.20]
 MIN_LEN = 0
 MIN_DF = 0.0
 USE_STEMMING = True
@@ -50,6 +51,8 @@ KEEP_DIGITS = False
 PERCENT_MODE = "drop"
 GLOBAL_TOP_MARGIN_MISCLASSIFIED_N = 10
 GLOBAL_TOP_MARGIN_MISCLASSIFIED_FILENAME = "global_top_margin_misclassified.csv"
+RAW_WORD_COUNT_FEATURE_NAME = "__doc_word_count_mm"
+LOG_WORD_COUNT_FEATURE_NAME = "__doc_log_word_count_mm"
 
 LINEAR_C_VALUES = [0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000]
 RBF_C_VALUES = [0.00001, 0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000]
@@ -69,6 +72,11 @@ RBF_SHAP_L1_REG = "num_features(20)"
 FEATURE_MODE_DIR_NAMES = {
     "binary": "bin",
     "count": "cnt",
+}
+WORD_COUNT_MODE_DIR_NAMES = {
+    "raw": "wc",
+    "log": "wcl",
+    "both": "wcb",
 }
 KERNEL_DIR_NAMES = {
     "linear": "lin",
@@ -208,10 +216,33 @@ def prompt_experiment_configuration():
         default_input="3",
     )
 
+    word_count_mode = prompt_choice(
+        "\n4. 文書単語数特徴を選択してください。",
+        [
+            "  1: 単語数をそのまま追加",
+            "  2: log1p(単語数) を追加",
+            "  3: 単語数で実行後、log1p(単語数) で実行",
+        ],
+        {
+            "1": "raw",
+            "raw": "raw",
+            "count": "raw",
+            "normal": "raw",
+            "2": "log",
+            "log": "log",
+            "log1p": "log",
+            "3": "both",
+            "both": "both",
+            "all": "both",
+        },
+        default_input="3",
+    )
+
     return {
         "kernel_mode": kernel_mode,
         "feature_mode": feature_mode,
         "threshold_mode": threshold_mode,
+        "word_count_mode": word_count_mode,
     }
 
 
@@ -245,11 +276,20 @@ def print_experiment_configuration(config):
             "both": "固定閾値方式 + 閾値チューニング方式",
         },
     )
+    word_count_label = format_user_selection(
+        config["word_count_mode"],
+        {
+            "raw": "単語数",
+            "log": "log1p(単語数)",
+            "both": "単語数 -> log1p(単語数)",
+        },
+    )
 
     log_progress("\n[config] selected runtime options")
     log_progress(f"[config] svm mode      : {kernel_label}")
     log_progress(f"[config] feature mode  : {feature_label}")
     log_progress(f"[config] threshold mode: {threshold_label}")
+    log_progress(f"[config] word count    : {word_count_label}")
 
 
 def load_corpus():
@@ -308,7 +348,48 @@ def vectorize_train_test_documents(train_docs, test_docs):
     test_vectorizer = Tf_idf(list(test_docs), True, MIN_LEN, use_stemming=USE_STEMMING)
     X_test_count = fitted_count_vectorizer.transform(test_vectorizer.processed_docs)
 
-    return X_train_count.tocsr(), X_test_count.tocsr(), np.array(feature_names)
+    train_word_counts = np.array([len(doc.split()) for doc in train_vectorizer.processed_docs], dtype=float)
+    test_word_counts = np.array([len(doc.split()) for doc in test_vectorizer.processed_docs], dtype=float)
+
+    return X_train_count.tocsr(), X_test_count.tocsr(), np.array(feature_names), train_word_counts, test_word_counts
+
+
+def min_max_scale_from_train(train_values, test_values):
+    """train 側だけで min/max を決め、train/test の 1 次元特徴を正規化する。"""
+    train_values = np.asarray(train_values, dtype=float)
+    test_values = np.asarray(test_values, dtype=float)
+    train_min = float(np.min(train_values)) if train_values.size else 0.0
+    train_max = float(np.max(train_values)) if train_values.size else 0.0
+    denominator = train_max - train_min
+    if denominator == 0:
+        return np.zeros_like(train_values, dtype=float), np.zeros_like(test_values, dtype=float)
+    return (train_values - train_min) / denominator, (test_values - train_min) / denominator
+
+
+def build_word_count_feature_bundle(train_word_counts, test_word_counts, word_count_mode):
+    """文書単語数特徴を train fit の min-max 正規化で作る。"""
+    feature_specs = []
+    if word_count_mode == "raw":
+        feature_specs.append((RAW_WORD_COUNT_FEATURE_NAME, train_word_counts, test_word_counts))
+    elif word_count_mode == "log":
+        feature_specs.append((LOG_WORD_COUNT_FEATURE_NAME, np.log1p(train_word_counts), np.log1p(test_word_counts)))
+    else:
+        raise ValueError(f"Unsupported word_count_mode for feature bundle: {word_count_mode}")
+
+    train_columns = []
+    test_columns = []
+    feature_names = []
+    for feature_name, train_values, test_values in feature_specs:
+        scaled_train, scaled_test = min_max_scale_from_train(train_values, test_values)
+        train_columns.append(scaled_train.reshape(-1, 1))
+        test_columns.append(scaled_test.reshape(-1, 1))
+        feature_names.append(feature_name)
+
+    return {
+        "feature_names": feature_names,
+        "train": sparse.csr_matrix(np.hstack(train_columns)) if train_columns else None,
+        "test": sparse.csr_matrix(np.hstack(test_columns)) if test_columns else None,
+    }
 
 
 def _nonzero_doc_counts(X):
@@ -381,7 +462,19 @@ def select_terms_by_abs_score(score_df, min_abs_score):
     return selected_terms_df, label1_selected, label0_selected
 
 
-def build_selected_feature_matrices(X_train_count, X_test_count, feature_names, selected_terms_df):
+def append_word_count_features(X_train, X_test, selected_terms, word_count_features):
+    """採用語特徴の後ろに文書単語数特徴を追加する。"""
+    word_feature_names = word_count_features["feature_names"]
+    if not word_feature_names:
+        return X_train, X_test, list(selected_terms)
+    return (
+        sparse.hstack([X_train, word_count_features["train"]], format="csr"),
+        sparse.hstack([X_test, word_count_features["test"]], format="csr"),
+        list(selected_terms) + word_feature_names,
+    )
+
+
+def build_selected_feature_matrices(X_train_count, X_test_count, feature_names, selected_terms_df, word_count_features):
     """採用語だけを抜き出し、count/binary の両特徴行列を返す。"""
     selected_terms = selected_terms_df["term"].tolist()
     vocab_index = {term: idx for idx, term in enumerate(feature_names)}
@@ -391,15 +484,29 @@ def build_selected_feature_matrices(X_train_count, X_test_count, feature_names, 
     X_train_selected_count = X_train_count[:, selected_indices]
     X_test_selected_count = X_test_count[:, selected_indices]
 
+    X_train_count_with_doc_features, X_test_count_with_doc_features, model_feature_names = append_word_count_features(
+        X_train_selected_count,
+        X_test_selected_count,
+        selected_terms,
+        word_count_features,
+    )
+    X_train_binary_with_doc_features, X_test_binary_with_doc_features, _ = append_word_count_features(
+        (X_train_selected_count != 0).astype(np.int8),
+        (X_test_selected_count != 0).astype(np.int8),
+        selected_terms,
+        word_count_features,
+    )
+
     return {
         "selected_terms": selected_terms,
+        "model_feature_names": model_feature_names,
         "count": {
-            "train": X_train_selected_count,
-            "test": X_test_selected_count,
+            "train": X_train_count_with_doc_features,
+            "test": X_test_count_with_doc_features,
         },
         "binary": {
-            "train": (X_train_selected_count != 0).astype(np.int8),
-            "test": (X_test_selected_count != 0).astype(np.int8),
+            "train": X_train_binary_with_doc_features,
+            "test": X_test_binary_with_doc_features,
         },
     }
 
@@ -407,7 +514,7 @@ def build_selected_feature_matrices(X_train_count, X_test_count, feature_names, 
 class SplitFeatureContext:
     """1 つの train/test split に必要な特徴量関連情報をまとめて持つコンテナ。"""
 
-    def __init__(self, train_docs, train_labels, test_docs, test_labels, train_doc_ids, test_doc_ids):
+    def __init__(self, train_docs, train_labels, test_docs, test_labels, train_doc_ids, test_doc_ids, word_count_mode):
         """split 単位でベクトル化とスコア表を事前計算して再利用できるようにする。"""
         self.train_docs = np.array(train_docs, dtype=object)
         self.train_labels = np.array(train_labels, dtype=int)
@@ -415,9 +522,21 @@ class SplitFeatureContext:
         self.test_labels = np.array(test_labels, dtype=int)
         self.train_doc_ids = np.array(train_doc_ids, dtype=int)
         self.test_doc_ids = np.array(test_doc_ids, dtype=int)
-        self.X_train_count, self.X_test_count, self.feature_names = vectorize_train_test_documents(
+        self.word_count_mode = word_count_mode
+        (
+            self.X_train_count,
+            self.X_test_count,
+            self.feature_names,
+            self.train_word_counts,
+            self.test_word_counts,
+        ) = vectorize_train_test_documents(
             self.train_docs,
             self.test_docs,
+        )
+        self.word_count_features = build_word_count_feature_bundle(
+            self.train_word_counts,
+            self.test_word_counts,
+            self.word_count_mode,
         )
         self.score_df = build_doc_count_score_table(self.X_train_count, self.train_labels, self.feature_names)
         self.threshold_cache = {}
@@ -432,6 +551,7 @@ class SplitFeatureContext:
                 self.X_test_count,
                 self.feature_names,
                 selected_terms_df,
+                self.word_count_features,
             )
             self.threshold_cache[score_threshold] = {
                 "score_threshold": score_threshold,
@@ -439,12 +559,13 @@ class SplitFeatureContext:
                 "label1_selected": label1_selected,
                 "label0_selected": label0_selected,
                 "selected_term_count": len(feature_matrices["selected_terms"]),
+                "model_feature_count": len(feature_matrices["model_feature_names"]),
                 "feature_matrices": feature_matrices,
             }
         return self.threshold_cache[score_threshold]
 
 
-def build_outer_fold_contexts(documents, labels, doc_ids):
+def build_outer_fold_contexts(documents, labels, doc_ids, word_count_mode):
     """outer/inner の全 split に対する `SplitFeatureContext` を先に構築する。
 
     候補パラメータごとに毎回ベクトル化し直すと非常に遅いため、split ごとの
@@ -473,6 +594,7 @@ def build_outer_fold_contexts(documents, labels, doc_ids):
             outer_test_labels,
             outer_train_doc_ids,
             outer_test_doc_ids,
+            word_count_mode,
         )
 
         # outer train の中だけで inner CV を作り、inner 側でもリークを防ぐ。
@@ -487,6 +609,7 @@ def build_outer_fold_contexts(documents, labels, doc_ids):
                     outer_train_labels[inner_test_index],
                     outer_train_doc_ids[inner_train_index],
                     outer_train_doc_ids[inner_test_index],
+                    word_count_mode,
                 )
             )
 
@@ -549,7 +672,8 @@ def fit_and_evaluate_split_context(split_context, score_threshold, feature_mode,
     """
     threshold_bundle = split_context.get_threshold_bundle(score_threshold)
     selected_term_count = threshold_bundle["selected_term_count"]
-    if selected_term_count == 0:
+    model_feature_count = threshold_bundle["model_feature_count"]
+    if model_feature_count == 0:
         return None
 
     X_train = threshold_bundle["feature_matrices"][feature_mode]["train"]
@@ -566,6 +690,7 @@ def fit_and_evaluate_split_context(split_context, score_threshold, feature_mode,
     y_pred = model.predict(X_test)
     result = {
         "selected_term_count": selected_term_count,
+        "model_feature_count": model_feature_count,
         "accuracy": float(accuracy_score(split_context.test_labels, y_pred)),
         "recall": float(recall_score(split_context.test_labels, y_pred, zero_division=0)),
         "precision": float(precision_score(split_context.test_labels, y_pred, zero_division=0)),
@@ -635,6 +760,7 @@ def evaluate_candidate_across_outer_folds(outer_fold_contexts, score_threshold, 
                 "outer_fold": fold_bundle["outer_fold"],
                 "score_threshold": score_threshold,
                 "selected_term_count": outer_result["selected_term_count"],
+                "model_feature_count": outer_result["model_feature_count"],
                 "c": c,
                 "gamma": gamma,
                 "param_label": candidate_label,
@@ -745,6 +871,7 @@ def run_nested_cv_for_condition(
                     )
 
     result = build_empty_result(feature_mode, kernel, score_threshold_candidates)
+    result["word_count_mode"] = outer_fold_contexts[0]["outer_context"].word_count_mode
     result["valid_param_labels"] = [
         format_candidate_label(score_threshold, c, gamma)
         for score_threshold, c, gamma in valid_candidate_results.keys()
@@ -900,11 +1027,11 @@ def build_linear_misclassification_analysis_rows(selected_record, model_detail, 
     # np.asarray(...) だけだと「疎行列オブジェクト1個の配列」になってしまうため、
     # toarray() を優先して数値ベクトルへ展開する。
     coefficient_vector = flatten_model_vector(model_detail["model"].coef_)
-    selected_terms = model_detail["threshold_bundle"]["feature_matrices"]["selected_terms"]
-    if coefficient_vector.shape[0] != len(selected_terms):
+    model_feature_names = model_detail["threshold_bundle"]["feature_matrices"]["model_feature_names"]
+    if coefficient_vector.shape[0] != len(model_feature_names):
         raise RuntimeError(
-            "linear coef_ length does not match selected term count: "
-            f"coef_len={coefficient_vector.shape[0]}, selected_terms={len(selected_terms)}"
+            "linear coef_ length does not match model feature count: "
+            f"coef_len={coefficient_vector.shape[0]}, model_features={len(model_feature_names)}"
         )
     term_metadata_lookup = (
         model_detail["threshold_bundle"]["selected_terms_df"].set_index("term").to_dict(orient="index")
@@ -926,7 +1053,7 @@ def build_linear_misclassification_analysis_rows(selected_record, model_detail, 
         doc_detail_rows = []
 
         for feature_idx, feature_value in zip(feature_indices, feature_values):
-            term = selected_terms[int(feature_idx)]
+            term = model_feature_names[int(feature_idx)]
             term_metadata = term_metadata_lookup.get(term, {})
             coefficient = float(coefficient_vector[int(feature_idx)])
             contribution = float(coefficient * float(feature_value))
@@ -1054,7 +1181,7 @@ def build_rbf_misclassification_analysis_rows(selected_record, model_detail, fea
     if len(model_detail["misclassified_indices"]) == 0:
         return [], []
 
-    selected_terms = model_detail["threshold_bundle"]["feature_matrices"]["selected_terms"]
+    model_feature_names = model_detail["threshold_bundle"]["feature_matrices"]["model_feature_names"]
     term_metadata_lookup = (
         model_detail["threshold_bundle"]["selected_terms_df"].set_index("term").to_dict(orient="index")
     )
@@ -1103,10 +1230,10 @@ def build_rbf_misclassification_analysis_rows(selected_record, model_detail, fea
             )
         if not np.all(np.isfinite(shap_vector)):
             shap_vector = np.nan_to_num(shap_vector, nan=0.0, posinf=0.0, neginf=0.0)
-        if shap_vector.shape[0] != len(selected_terms):
+        if shap_vector.shape[0] != len(model_feature_names):
             raise RuntimeError(
-                "rbf shap length does not match selected term count: "
-                f"shap_len={shap_vector.shape[0]}, selected_terms={len(selected_terms)}"
+                "rbf shap length does not match model feature count: "
+                f"shap_len={shap_vector.shape[0]}, model_features={len(model_feature_names)}"
             )
 
         nonzero_indices = np.flatnonzero(feature_values)
@@ -1118,7 +1245,7 @@ def build_rbf_misclassification_analysis_rows(selected_record, model_detail, fea
 
         doc_detail_rows = []
         for feature_idx in ranked_indices:
-            term = selected_terms[int(feature_idx)]
+            term = model_feature_names[int(feature_idx)]
             term_metadata = term_metadata_lookup.get(term, {})
             shap_value = float(shap_vector[int(feature_idx)])
             row = {
@@ -1476,6 +1603,7 @@ def save_nested_cv_result_csvs(result, output_dir, output_prefix):
     # 条件全体の平均指標を 1 行で見られるよう、summary 用 CSV を先に作る。
     metrics_row = {
         "feature_mode": result["feature_mode"],
+        "word_count_mode": result.get("word_count_mode", ""),
         "kernel": result["kernel"],
         "margin_threshold": result["margin_threshold"],
         "candidate_score_thresholds": ",".join(map(str, result.get("candidate_score_thresholds", []))),
@@ -1498,6 +1626,7 @@ def save_nested_cv_result_csvs(result, output_dir, output_prefix):
             "outer_fold",
             "score_threshold",
             "selected_term_count",
+            "model_feature_count",
             "misclassified_count",
             "c",
             "gamma",
@@ -1952,6 +2081,11 @@ def get_active_conditions(kernel_mode, feature_mode):
     return conditions
 
 
+def get_active_word_count_modes(word_count_mode):
+    """起動時入力にもとづいて文書単語数特徴の実行モードを返す。"""
+    return ["raw", "log"] if word_count_mode == "both" else [word_count_mode]
+
+
 def print_result(result, heading):
     """1 条件ぶんの結果をコンソールに見やすく表示する。"""
     print(f"\n{heading}")
@@ -2007,25 +2141,28 @@ def print_result(result, heading):
         print(f"warning: {warning_message}")
 
 
-if __name__ == "__main__":
-    runtime_config = prompt_experiment_configuration()
-    print_experiment_configuration(runtime_config)
-
-    documents, labels, doc_ids, pdf_names = load_corpus()
-    active_conditions = get_active_conditions(
-        runtime_config["kernel_mode"],
-        runtime_config["feature_mode"],
-    )
+def run_experiment_for_word_count_mode(documents, labels, doc_ids, pdf_names, active_conditions, runtime_config, word_count_mode):
+    """指定された文書単語数特徴モードで nested CV と出力保存を一通り実行する。"""
     global_margin_source_results = []
-    log_progress("[main] corpus loaded; building split contexts")
-    outer_fold_contexts = build_outer_fold_contexts(documents, labels, doc_ids)
+    log_progress(f"\n[main] word count mode = {word_count_mode}")
+    log_progress("[main] building split contexts")
+    outer_fold_contexts = build_outer_fold_contexts(
+        documents,
+        labels,
+        doc_ids,
+        word_count_mode,
+    )
 
-    fixed_root = SAVE_DIR / FIXED_DIR_NAME
-    tuned_root = SAVE_DIR / TUNED_DIR_NAME
+    output_root = SAVE_DIR / WORD_COUNT_MODE_DIR_NAMES[word_count_mode]
+    output_root.mkdir(parents=True, exist_ok=True)
+    log_progress(f"[config] output root   : {output_root}")
+
+    fixed_root = output_root / FIXED_DIR_NAME
+    tuned_root = output_root / TUNED_DIR_NAME
     threshold_count_paths = save_threshold_term_count_outputs(
         outer_fold_contexts,
         ABS_SCORE_THRESHOLDS,
-        SAVE_DIR / THRESHOLD_COUNT_DIR_NAME,
+        output_root / THRESHOLD_COUNT_DIR_NAME,
     )
 
     log_progress(f"saved threshold term-count csv: {threshold_count_paths['outer_fold_threshold_term_counts']}")
@@ -2159,7 +2296,7 @@ if __name__ == "__main__":
             global_margin_source_results,
             outer_fold_contexts,
             pdf_names,
-            SAVE_DIR / GLOBAL_TOP_MARGIN_MISCLASSIFIED_FILENAME,
+            output_root / GLOBAL_TOP_MARGIN_MISCLASSIFIED_FILENAME,
             GLOBAL_TOP_MARGIN_MISCLASSIFIED_N,
         )
         log_progress(f"saved global top-margin misclassified csv: {global_margin_csv_path}")
@@ -2167,4 +2304,29 @@ if __name__ == "__main__":
         log_progress(
             "[output warning] global top-margin misclassified export failed: "
             f"{type(exc).__name__}: {exc}"
+        )
+
+
+if __name__ == "__main__":
+    runtime_config = prompt_experiment_configuration()
+    print_experiment_configuration(runtime_config)
+
+    documents, labels, doc_ids, pdf_names = load_corpus()
+    active_conditions = get_active_conditions(
+        runtime_config["kernel_mode"],
+        runtime_config["feature_mode"],
+    )
+    active_word_count_modes = get_active_word_count_modes(runtime_config["word_count_mode"])
+    log_progress("[main] corpus loaded")
+    log_progress(f"[main] active word count modes: {active_word_count_modes}")
+
+    for active_word_count_mode in active_word_count_modes:
+        run_experiment_for_word_count_mode(
+            documents,
+            labels,
+            doc_ids,
+            pdf_names,
+            active_conditions,
+            runtime_config,
+            active_word_count_mode,
         )
