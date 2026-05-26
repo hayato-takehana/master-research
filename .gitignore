@@ -8,3 +8,9 @@ data/outputs/
 
 # Temporary backup while rebuilding Git metadata
 .git_backup_*/
+
+# Large local datasets
+Final_Dataset.csv
+active/another_data_japanese/fraud_detection_train_text_only.csv
+
+*.csv

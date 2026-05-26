@@ -2,7 +2,6 @@ import re
 import os
 import pickle
 import json
-import fitz  # PyMuPDF
 
 
 def normalize_text(text, keep_digits=False, percent_mode="drop"):
@@ -94,6 +93,8 @@ class Text_road_and_dell:
         return cached_metadata == self._source_metadata(files)
 
     def _read_pdf_text(self, file_path):
+        import fitz  # PyMuPDF
+
         doc = fitz.open(file_path)
         extracted_text = ""
         for page in doc:
