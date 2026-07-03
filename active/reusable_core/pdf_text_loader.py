@@ -4,31 +4,30 @@ import pickle
 import json
 
 
+PREPROCESSING_VERSION = 2
+
+
 def normalize_text(text, keep_digits=False, percent_mode="drop"):
-    # 1. 行末のハイフンと改行をセットで消去（単語の分断を最優先で結合）
-    # 例: "re-\n entrancy" -> "reentrancy"
-    text = re.sub(r'-\s*[\r\n]\s*', '', text)
+    # 1. 単語をつなぐハイフンを空白へ置換する。
+    # 例: "state-of-the-art" -> "state of the art"
+    text = re.sub(r"[-‐‑‒–—―]+", " ", text)
 
-    # 2. 文中に残っているすべてのハイフンを空文字に置換
-    # 例: "re-entrancy" -> "reentrancy", "big-endian" -> "bigendian"
-    text = text.replace('-', '')
-
-    # 3. パーセント表記の扱いを切り替える
+    # 2. パーセント表記の扱いを切り替える
     if percent_mode == "word":
         text = text.replace('%', ' percent ')
     elif percent_mode != "drop":
         raise ValueError(f"Unsupported percent_mode: {percent_mode}")
 
-    # 4. 残った改行コードをスペースに置換
+    # 3. 残った改行コードをスペースに置換
     text = re.sub(r'[\r\n]+', ' ', text)
 
-    # 5. 英数字の保持有無に応じて許可文字を切り替える
+    # 4. 英数字の保持有無に応じて許可文字を切り替える
     if keep_digits:
         text = re.sub(r'[^a-zA-Z0-9\s]', '', text)
     else:
         text = re.sub(r'[^a-zA-Z\s]', '', text)
 
-    # 6. 連続する空白を1つのスペースに集約し、前後の空白を削除
+    # 5. 連続する空白を1つのスペースに集約し、前後の空白を削除
     text = re.sub(r'\s+', ' ', text).strip()
 
     return text
@@ -71,6 +70,12 @@ class Text_road_and_dell:
             )
         return metadata
 
+    def _cache_metadata(self, files):
+        return {
+            "preprocessing_version": PREPROCESSING_VERSION,
+            "sources": self._source_metadata(files),
+        }
+
     def _metadata_path(self):
         return f"{self.cash_file}.sources.json"
 
@@ -80,9 +85,8 @@ class Text_road_and_dell:
 
         metadata_path = self._metadata_path()
         if not os.path.exists(metadata_path):
-            # 古い形式のキャッシュは、PDFだけなら従来通り使えるが、
-            # txt差し替えが入った場合は文書内容が変わるため再作成する。
-            return not any(filename.lower().endswith(".txt") for filename in files)
+            # 前処理バージョンを確認できない古いキャッシュは再作成する。
+            return False
 
         try:
             with open(metadata_path, "r", encoding="utf-8") as f:
@@ -90,7 +94,7 @@ class Text_road_and_dell:
         except Exception:
             return False
 
-        return cached_metadata == self._source_metadata(files)
+        return cached_metadata == self._cache_metadata(files)
 
     def _read_pdf_text(self, file_path):
         import fitz  # PyMuPDF
@@ -137,7 +141,7 @@ class Text_road_and_dell:
             with open(self.cash_file, "wb") as f:
                 pickle.dump(documents, f)
             with open(self._metadata_path(), "w", encoding="utf-8") as f:
-                json.dump(self._source_metadata(files), f, ensure_ascii=False, indent=2)
+                json.dump(self._cache_metadata(files), f, ensure_ascii=False, indent=2)
             print("新たに保存しました。")
 
         return documents

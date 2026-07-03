@@ -28,6 +28,24 @@ from project_runtime import find_project_root
 MODULE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = find_project_root(MODULE_DIR)
 
+PRE_RESEARCH_DATASET_NAMES = (
+    "詐欺_先行研究",
+    "詐欺じゃない_先行研究",
+)
+PRE_RESEARCH_DELETE_V1_DATASET_NAMES = (
+    "詐欺_先行研究_delete_v1",
+    "詐欺じゃない_先行研究_delete_v1",
+)
+PRE_RESEARCH_NEW_LABEL_DATASET_NAMES = (
+    "詐欺_先行研究_新ラベル",
+    "詐欺じゃない_先行研究_新ラベル",
+)
+REAL_SCAM_DATASET_NAMES = (
+    "詐欺_実際の詐欺",
+    "詐欺じゃない_実際の詐欺",
+)
+
+
 def _cache_path(filename, keep_digits=False, percent_mode="drop"):
     suffix_parts = []
     if keep_digits:
@@ -43,20 +61,55 @@ def _cache_path(filename, keep_digits=False, percent_mode="drop"):
     return PROJECT_ROOT / f"{path.stem}{suffix}{path.suffix}"
 
 
-def _dataset_paths(real_scam=False):
-    if real_scam:
+def _resolve_dataset_names(real_scam=False, dataset_names=None):
+    if dataset_names is None:
         return (
-            PROJECT_ROOT / "詐欺_実際の詐欺",
-            PROJECT_ROOT / "詐欺じゃない_実際の詐欺",
+            REAL_SCAM_DATASET_NAMES
+            if real_scam
+            else PRE_RESEARCH_DATASET_NAMES
         )
+
+    if isinstance(dataset_names, (str, bytes)):
+        raise ValueError(
+            "dataset_names must contain scam and non-scam directory names."
+        )
+    try:
+        resolved_names = tuple(dataset_names)
+    except TypeError as exc:
+        raise ValueError(
+            "dataset_names must contain scam and non-scam directory names."
+        ) from exc
+    if len(resolved_names) != 2:
+        raise ValueError(
+            "dataset_names must contain exactly two directory names."
+        )
+
+    normalized_names = tuple(str(name).strip() for name in resolved_names)
+    if not all(normalized_names):
+        raise ValueError("Dataset directory names must not be empty.")
+    return normalized_names
+
+
+def _dataset_paths(real_scam=False, dataset_names=None):
+    scam_dataset_name, non_scam_dataset_name = _resolve_dataset_names(
+        real_scam=real_scam,
+        dataset_names=dataset_names,
+    )
     return (
-        PROJECT_ROOT / "詐欺_先行研究",
-        PROJECT_ROOT / "詐欺じゃない_先行研究",
+        PROJECT_ROOT / scam_dataset_name,
+        PROJECT_ROOT / non_scam_dataset_name,
     )
 
 
-def load_document_filenames(real_scam=False, sort_files=False):
-    scam_folder, non_scam_folder = _dataset_paths(real_scam=real_scam)
+def load_document_filenames(
+    real_scam=False,
+    sort_files=False,
+    dataset_names=None,
+):
+    scam_folder, non_scam_folder = _dataset_paths(
+        real_scam=real_scam,
+        dataset_names=dataset_names,
+    )
 
     def _display_document_name(filename):
         path = Path(filename)
@@ -82,15 +135,31 @@ def load_document_filenames(real_scam=False, sort_files=False):
     return _list_document_names(scam_folder), _list_document_names(non_scam_folder)
 
 
-def load_documents(real_scam=False, keep_digits=False, percent_mode="drop"):
-    if real_scam:
-        scam_cache = _cache_path("document_詐欺_実際の詐欺.pkl", keep_digits, percent_mode)
-        non_scam_cache = _cache_path("document_詐欺じゃない_実際の詐欺.pkl", keep_digits, percent_mode)
-    else:
-        scam_cache = _cache_path("document_詐欺_先行研究.pkl", keep_digits, percent_mode)
-        non_scam_cache = _cache_path("document_詐欺じゃない_先行研究.pkl", keep_digits, percent_mode)
+def load_documents(
+    real_scam=False,
+    keep_digits=False,
+    percent_mode="drop",
+    dataset_names=None,
+):
+    scam_dataset_name, non_scam_dataset_name = _resolve_dataset_names(
+        real_scam=real_scam,
+        dataset_names=dataset_names,
+    )
+    scam_cache = _cache_path(
+        f"document_{scam_dataset_name}.pkl",
+        keep_digits,
+        percent_mode,
+    )
+    non_scam_cache = _cache_path(
+        f"document_{non_scam_dataset_name}.pkl",
+        keep_digits,
+        percent_mode,
+    )
 
-    scam_folder, non_scam_folder = _dataset_paths(real_scam=real_scam)
+    scam_folder, non_scam_folder = _dataset_paths(
+        real_scam=real_scam,
+        dataset_names=(scam_dataset_name, non_scam_dataset_name),
+    )
 
     text_sagi = Text_road_and_dell(
         str(scam_cache),
@@ -112,11 +181,19 @@ def load_documents(real_scam=False, keep_digits=False, percent_mode="drop"):
 
 
 # ファイルの読み込みと、TF-IDF real_scam:trueで実際の詐欺、tf_idf_true:TrueでTF-IDF,Falseで頻度
-def common(real_scam, tf_idf_true, keep_digits=False, percent_mode="drop", use_stemming=False):
+def common(
+    real_scam,
+    tf_idf_true,
+    keep_digits=False,
+    percent_mode="drop",
+    use_stemming=False,
+    dataset_names=None,
+):
     document_sagi, document_no_sagi = load_documents(
         real_scam=real_scam,
         keep_digits=keep_digits,
         percent_mode=percent_mode,
+        dataset_names=dataset_names,
     )
 
     # 詐欺のと詐欺でないドキュメントの結合

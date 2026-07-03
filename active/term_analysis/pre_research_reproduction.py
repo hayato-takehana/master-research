@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import sys
+import tempfile
 import time
 
 
@@ -27,7 +28,10 @@ redirect_relative_outputs(SAVE_DIR)
 
 import pandas as pd  # noqa: E402
 from sklearn import svm  # noqa: E402
+from sklearn.base import BaseEstimator, TransformerMixin  # noqa: E402
 from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_val_predict  # noqa: E402
+from sklearn.pipeline import Pipeline  # noqa: E402
+from sklearn.utils.validation import check_is_fitted  # noqa: E402
 
 from dataset_loader import load_documents  # noqa: E402
 from text_vectorizer import Tf_idf  # noqa: E402
@@ -42,6 +46,47 @@ MIN_DF = 0.02
 N_SPLITS = 10
 RANDOM_STATE = 42
 RESULT_CSV = SAVE_DIR / "pre_research_svm_reproduction_results.csv"
+
+
+class PriorResearchTfidfTransformer(TransformerMixin, BaseEstimator):
+    """学習foldだけで前処理・語彙・IDFを学習するTF-IDF変換器。"""
+
+    def __init__(self, min_len=MIN_LEN, min_df=MIN_DF, use_stemming=USE_STEMMING):
+        self.min_len = min_len
+        self.min_df = min_df
+        self.use_stemming = use_stemming
+
+    def _fit_documents(self, documents):
+        tf_idf = Tf_idf(
+            list(documents),
+            True,
+            self.min_len,
+            use_stemming=self.use_stemming,
+        )
+        X, feature_names, vectorizer = tf_idf.tf_idf(
+            self.min_df,
+            ngram_range=(1, 1),
+        )
+        self.feature_names_ = feature_names
+        self.vectorizer_ = vectorizer
+        return X
+
+    def fit(self, documents, labels=None):
+        self._fit_documents(documents)
+        return self
+
+    def fit_transform(self, documents, labels=None, **fit_params):
+        return self._fit_documents(documents)
+
+    def transform(self, documents):
+        check_is_fitted(self, ("feature_names_", "vectorizer_"))
+        tf_idf = Tf_idf(
+            list(documents),
+            True,
+            self.min_len,
+            use_stemming=self.use_stemming,
+        )
+        return self.vectorizer_.transform(tf_idf.processed_docs)
 
 
 def load_corpus() -> tuple[list[str], list[int]]:
@@ -59,31 +104,42 @@ def load_corpus() -> tuple[list[str], list[int]]:
     return documents, labels
 
 
-def build_tfidf_features(documents: list[str]):
-    tf_idf = Tf_idf(
-        documents,
-        True,
-        MIN_LEN,
-        use_stemming=USE_STEMMING,
+def build_svm_pipeline(memory=None) -> Pipeline:
+    return Pipeline(
+        steps=[
+            (
+                "tfidf",
+                PriorResearchTfidfTransformer(),
+            ),
+            (
+                "svc",
+                svm.SVC(class_weight="balanced", random_state=RANDOM_STATE),
+            ),
+        ],
+        memory=memory,
     )
-    X, feature_names, vectorizer = tf_idf.tf_idf(MIN_DF, ngram_range=(1, 1))
-    print("Number of features:", len(feature_names))
-    return X, feature_names, vectorizer
 
 
-def evaluate_svm_prior_research(X, labels: list[int]) -> dict[str, object]:
+def evaluate_svm_prior_research(documents: list[str], labels: list[int]) -> dict[str, object]:
     param_grid = {
-        "kernel": ["linear", "rbf", "sigmoid"],
-        "C": [0.1, 0.5, 1, 3, 5],
-        "gamma": [0.01, 0.001, 0.0001],
+        "svc__kernel": ["linear", "rbf", "sigmoid"],
+        "svc__C": [0.1, 0.5, 1, 3, 5],
+        "svc__gamma": [0.01, 0.001, 0.0001],
     }
-    clf = svm.SVC(class_weight="balanced", random_state=RANDOM_STATE)
 
     inner_cv = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
-    grid_search = GridSearchCV(estimator=clf, param_grid=param_grid, cv=inner_cv, scoring="accuracy")
-
     outer_cv = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=RANDOM_STATE)
-    predictions = cross_val_predict(grid_search, X, labels, cv=outer_cv)
+
+    # Pipelineのキャッシュにより、同一inner splitのTF-IDF再計算を候補ごとに繰り返さない。
+    with tempfile.TemporaryDirectory(prefix="pre_research_tfidf_") as cache_dir:
+        pipeline = build_svm_pipeline(memory=cache_dir)
+        grid_search = GridSearchCV(
+            estimator=pipeline,
+            param_grid=param_grid,
+            cv=inner_cv,
+            scoring="accuracy",
+        )
+        predictions = cross_val_predict(grid_search, documents, labels, cv=outer_cv)
 
     TP = TN = FP = FN = 0
     for true, pred in zip(labels, predictions):
@@ -127,8 +183,7 @@ def evaluate_svm_prior_research(X, labels: list[int]) -> dict[str, object]:
 def main() -> int:
     start_time = time.time()
     documents, labels = load_corpus()
-    X, _, _ = build_tfidf_features(documents)
-    result = evaluate_svm_prior_research(X, labels)
+    result = evaluate_svm_prior_research(documents, labels)
 
     result_df = pd.DataFrame([result])
     result_df.to_csv(RESULT_CSV, index=False, encoding="utf-8-sig")

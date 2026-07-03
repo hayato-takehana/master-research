@@ -1,0 +1,214 @@
+NIOX Suite
+Litepaper
+v 1.0
+
+autonio.foundation
+
+autonio.foundation
+1. Executive Summary
+
+"Building a prosperous community around algorithmic trading"
+
+The NIOX Suite is an accessible, decentralized, and comprehensive set of financial tools for the crypto economy. The Suite makes it easier for crypto traders to conduct trading analysis, deploy trading algorithms, and exchange cryptocurrencies.
+
+The NIOX Foundation, consisting of the founders and core developers of the AutoNIO trading platform, is launching the NIOX Suite to address the technical complexity, secrecy, and exclusivity found in existing trading services. The Suite's goal is to provide users with simple infrastructure for engaging with cryptocurrency markets.
+
+Pair
+Exchange
+Algorithm
+Interval
+Indicators
+
+The NIOX Suite's flagship service is AutoNIO, an artificial intelligence trading platform that democratizes access to advanced trading algorithms. In addition, the NIOX Foundation is launching a sentiment analysis tool and a decentralized exchange, NIOnet and NIOdex respectively, to provide traders of all backgrounds with resources for due diligence, security, and liquidity.
+
+The NIOX Token, the native cryptocurrency of the NIOX Suite, is used to construct a sharing economy around the crypto trading ecosystem. Users can buy NIOX tokens, create or purchase an algorithm, conduct technical analysis, and begin live trading.
+
+This paper details the inner workings of the NIOX Suite, as well as the steps that the NIOX Foundation is taking to crowdsource trading intelligence and apply it to the crypto industry.
+
+NIOX Suite
+
+NIOX Terminal
+NIOX Trading Terminal
+Algo Trading & Market Making
+Algo Marketplace
+
+NIOX AI
+NIOX Neural Network
+Sentiment Analysis
+AI & ML Features
+
+NIOX Exchange
+NIOX Smartdex
+Integrated Market Making
+AI & ML Features
+
+NIOX Terminal
+
+NIOX is a decentralized AI trading system that grants open access to a wide array of algorithmic trading opportunities. It allows users to learn about, build, sell, and deploy intelligent trading algorithms, and run market makers through a single user-friendly interface.
+
+www.autonio.foundation
+
+autonio.foundation
+
+Forging a community around algorithmic trading
+
+Build: NIOX Terminal features an algorithm customization tool with 20 technical indicators. Those who don't desire custom algorithms can alternatively choose from a base set of 10+ provided trading algorithms or import their own.
+
+Shop: Vetted trading algorithms that earn over 1% returns on front-tested data can be sold to other users on the NIOX Algorithm Marketplace. The profits from these sales go directly to algorithm creators, without disclosing the technical underpinnings of the algorithm itself.
+
+Deploy: Purchased/created algorithms can be front-tested, backtested, and deployed on any one of NIOX's 5 integrated exchanges.
+
+Market Maker: NIOX Terminal offers a low-cost market making tool that allows users to make markets with the click of a button.
+
+Learn: Users looking to improve their portfolios can pay for consulting, mimicry, and portfolio rebalancing services from other expert traders.
+
+NIOX Market Maker is a simple, robust market making bot available to all users on the NIOX platform. To run The Market Maker, users connect their funds to the NIOX platform, choose their strategy, and click to deploy it. Upon deployment, The Market Maker will begin to conduct thousands of complex calculations from the BitShares' data points and execute rapid trades in a fashion highly optimized to the exchange.
+
+Learn
+Pay for Trading Consulting
+Copy-Trading
+Portfolio Rebalancing advice
+
+Deploy
+Backtest
+Livetest
+Deploy algorithms on the Live Markets
+
+Shop
+List algorithms on the marketplace or buy a better algorithm
+
+Liquidity
+Customized Market Maker and deploy on integrated exchange
+
+Build
+Build an algorithm from the Base Set, Customization Tool, or Importer
+
+NIOX Terminal
+
+The long-term goal of NIOX Market Maker is to merge algorithmic signals into its operation. This will help to protect market makers from getting caught in a one-way flow, commonly referred to as a "black swan" occurrence.
+
+NIOX Market Maker will launch with three strategies that users can implement to suit any trade style. More variations will likely be added in the future.
+
+www.autonio.foundation
+
+autonio.foundation
+
+NIOX Market Maker Trading Options:
+
+Nonstop Market Making (Default): Constant market making, without taking any price swings into consideration. Ideal for a choppy two-way market.
+
+Straight Shooter: Ideal for a slightly trending market where 5 to 10% swings in a day are common.
+
+Smart Market Maker: Ideal for market making in extreme conditions, where swings are high in volatility (e.g. 20% swings within five minutes). The smart market maker will increase the probability of a return in an extreme market and can be used in less volatile conditions.
+
+NIOX AI
+
+NIOX AI is the NIOX Suite's AI trading insight tool. It allows users to conduct complex sentiment analysis on a wide array of trading pairs.
+
+NIOX AI will be deployed directly on top of the NIOX and NIOX Exchange platforms, allowing users to take much of the emotion out of their crypto trades. The tool allows traders who are confined to the use of poorly-constructed analytics tools (like Google Sheets functions) to be able to maximize their trading efficiency using proven AI models.
+
+NIOX AI leverages the use of the highly-popular Hidden Markov Model to analyze the latest market sentiment and trading patterns. This has manifested in the creation of three specific offerings: Google Search Volume AI, Social Media Sentiment AI, and a Genetic Algorithm.
+
+NIOX AI
+
+Social Media AI
+Buy / Sell recommendations based on social media sentiment analysis
+
+Search Volume AI
+Buy / Sell recommendations based on search popularity
+
+Genetic Algorithm
+Dynamic, self-adjusting, AI based trading algorithm
+
+NIOX Terminal
+NIOX Exchange
+
+www.autonio.foundation
+
+autonio.foundation
+
+NIOX Exchange
+
+The NIOX Decentralized Exchange (NIOX Exchange) is a "smart dex", or intelligent blockchain exchange, designed for secure peer-to-peer trading. It allows users to reliably trade cryptocurrency with minimal friction.
+
+NIOX Exchange was created as a sandbox for traders to test, learn, and trade cryptocurrency with security and a highly-intuitive user experience. The exchange plugs into the 0x protocol as a secondary source of liquidity and bakes in internal incentives for increased exchange usage.
+
+Integration with NIOX and NIOX AI additionally allows the NIOX Exchange to support the deployment of a myriad of novel trading algorithms and sentiment analysis tools; creating a "smart", or rational and higher-order trading environment that can be traded upon reliably by all users.
+
+In the future, NIOX Exchange will look to fully decentralize its offerings, providing an end-to-end secure user experience. However, until scalable solutions have achieved mainstream adoption, we believes that a hybridized approach is most appropriate for the NIOX community.
+
+NIOX Exchange
+
+NIOX AI
+NIOX Terminal
+NIOX Exchange
+
+Strong Throughput
+Off-chain order matching allows for higher trading volume
+
+Secure Transactions
+Trade cryptocurrency securely without sending funds to a central account
+
+Algorithmic Trading
+NIOX Terminal & NIOX AI integration allows for deployment on NIOX Exchange
+
+www.autonio.foundation
+
+autonio.foundation
+
+NIOX Token Economics
+
+NIOX Tokens can be purchased on any supported exchange. Tokens are not immediately required to use the NIOX Suite. NIOX Suite is free to use until November, there will be hold-to-use subscription model starting from Dec 2020.
+
+Trading Symbol
+NIOX
+
+Token Type
+Staking/Utility/Governance
+
+Price
+0.000038 ETH
+
+Decimals
+4
+
+Total Supply
+300,000,000
+
+In Circulation
+10,590,137.50
+
+Staked Tokens
+82,943,711.50
+
+Token Utility
+
+NIOX Terminal
+NIOX AI
+NIOX Exchange
+
+www.autonio.foundation
+
+autonio.foundation
+
+To be Listed on
+
+DIGIFINEX
+LOOPRING
+UNISWAP
+
+Exchange available to trade on
+
+BINANCE
+BITFINEX
+KuCoin
+DIGIFINEX
+beaxy
+
+Exchange integrations coming soon
+
+LOOPRING
+UNISWAP
+SYNTHETIX
+
+www.autonio.foundation
