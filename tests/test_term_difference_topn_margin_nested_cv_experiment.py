@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 os.environ.setdefault("DIFFERENCES_BETWEEN_LABELS_OUTPUT_ROOT", str(PROJECT_ROOT))
 
-from active.tf_deletion_predata import (  # noqa: E402
+from active.tf_delete_v1_predata.research import (  # noqa: E402
     term_difference_topn_margin_nested_cv_experiment as experiment,
 )
 

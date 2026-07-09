@@ -14,3 +14,4 @@ Final_Dataset.csv
 active/another_data_japanese/fraud_detection_train_text_only.csv
 
 *.csv
+*.pdf
